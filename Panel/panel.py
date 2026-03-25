@@ -10,11 +10,15 @@ from CONSTANTS import state_map_nba, state_map_wnba, county_map_nba, county_map_
 
 class GamePanel:
     def __init__(self, league, county_team_mapping=None, grey_zone=False,
-                 trends=False, county_only=False):
+                 trends=False, county_only=False,
+                 min_coverage=0.0, min_seasons=0, pop_cap=None):
       self.league = league
       self.trends = trends
       self.grey_zone = grey_zone
       self.county_only = county_only
+      self.min_coverage = min_coverage
+      self.min_seasons = min_seasons
+      self.pop_cap = pop_cap
       if league.lower() == 'nba':
         self.state_map = state_map_nba
         self.county_map = county_map_nba
@@ -264,6 +268,46 @@ class GamePanel:
           panel = panel[panel['temp_county'] == panel['county']]
           panel.drop(columns=['temp_county'], inplace=True)
 
+
+      # ── ORI quality filters ──
+      if self.pop_cap is not None:
+          before = panel['ori'].nunique()
+          panel = panel[panel['population_estimate'] <= self.pop_cap]
+          after = panel['ori'].nunique()
+          print(f"Population cap ({self.pop_cap:,}): {before - after:,} ORIs dropped, "
+                f"{after:,} remaining")
+
+      if self.min_coverage > 0 and 'season' in panel.columns:
+          n_ori_before = panel['ori'].nunique()
+          # Total game days per season (from actual game schedule)
+          season_game_days = (panel[panel['game_day'] == 1]
+              .groupby('season')['game_date'].nunique()
+              .rename('total_game_days'))
+          # Game days each ORI actually has data for, per season
+          ori_season = (panel[panel['game_day'] == 1]
+              .groupby(['ori', 'season'])['game_date'].nunique()
+              .rename('ori_game_days').reset_index())
+          ori_season = ori_season.merge(season_game_days, on='season')
+          ori_season['coverage'] = ori_season['ori_game_days'] / ori_season['total_game_days']
+          # Keep ORIs where ALL their seasons meet the threshold
+          bad_ori_seasons = ori_season[ori_season['coverage'] < self.min_coverage]['ori'].unique()
+          panel = panel[~panel['ori'].isin(bad_ori_seasons)]
+          n_ori_after = panel['ori'].nunique()
+          med_cov = ori_season[~ori_season['ori'].isin(bad_ori_seasons)]['coverage'].median()
+          print(f"Coverage filter (>={self.min_coverage:.0%} game days/season): "
+                f"{n_ori_before - n_ori_after:,} ORIs dropped, {n_ori_after:,} remaining "
+                f"(median coverage: {med_cov:.0%})")
+
+      if self.min_seasons > 0 and 'season' in panel.columns:
+          n_ori_before = panel['ori'].nunique()
+          ori_nyears = panel.groupby('ori')['season'].nunique()
+          keep_oris = ori_nyears[ori_nyears >= self.min_seasons].index
+          panel = panel[panel['ori'].isin(keep_oris)]
+          n_ori_after = panel['ori'].nunique()
+          print(f"Longevity filter (>={self.min_seasons} seasons): "
+                f"{n_ori_before - n_ori_after:,} ORIs dropped, {n_ori_after:,} remaining")
+
+      panel.reset_index(drop=True, inplace=True)
 
       n_missing_pop = panel['population_estimate'].isna().sum()
       if n_missing_pop > 0:
