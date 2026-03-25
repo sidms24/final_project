@@ -113,11 +113,8 @@ class GamePanel:
               print(f"WARNING: {dupes.sum()} duplicate team-date rows — deduplicating")
               games = games.drop_duplicates(subset=['team', 'game_date'], keep='first')
 
-      grid = (grid.groupby(['county', 'state', 'game_date', 'year'], as_index=False)
-          .agg(ipv_count=('ipv_count','sum'), spouse_count=('spouse_count','sum'),
-               bgfriend_count=('bgfriend_count','sum'),
-               population_estimate=('ori_population', 'sum')))
-      print(f"County-day aggregation: {grid['county'].nunique():,} counties, {len(grid):,} rows")
+      grid = grid.rename(columns={'ori_population': 'population_estimate'})
+      print(f"ORI-day panel: {grid['ori'].nunique():,} ORIs, {grid['county'].nunique():,} counties, {len(grid):,} rows")
 
       legal_state = (legal.drop(columns=['team', 'betting_type'], errors='ignore')
                           .drop_duplicates(subset=['state']))
