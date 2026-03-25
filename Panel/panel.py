@@ -22,10 +22,10 @@ class GamePanel:
          self.county_map = county_map_wnba
          self.state_map = state_map_wnba
        
-      if county_team_mapping is None and not trends:
+      if county_team_mapping is None:
         self.mapping = load_favourites(league)
         self.counties = list(self.mapping.keys())
-      elif not trends:
+      else:
         self.mapping = county_team_mapping
         self.counties = list(self.mapping.keys())
       self._active_days = None
@@ -152,13 +152,19 @@ class GamePanel:
       panel['cohort_year'] = panel['legal_date'].dt.year.fillna(10000).astype(int)
 
       # Game merge
+      panel['team'] = panel['county'].map(self.mapping)
       if self.trends:
         outcome_rank = {'unexpected_loss': 0, 'close_loss': 1, 'expected_loss': 2,
                         'close_win': 3, 'expected_win': 4, 'unexpected_win': 5}
         games_st = games.copy()
         games_st['_rank'] = games_st['game_outcome'].map(outcome_rank)
+        # Sort so worst outcome comes first — 'first' in agg picks that game's teams
+        games_st = games_st.sort_values('_rank')
         agg_dict = {'game_outcome': 'first', '_rank': 'min', 'national_tv': 'max',
                     'is_playoff': 'max', 'PACE': 'mean', 'tipoff_hour': 'mean'}
+        for col in ['home_team', 'away_team']:
+            if col in games_st.columns:
+                agg_dict[col] = 'first'
         agg_dict = {k: v for k, v in agg_dict.items() if k in games_st.columns}
         state_games = games_st.groupby(['state', 'game_date']).agg(agg_dict).reset_index()
         rank_to_outcome = {v: k for k, v in outcome_rank.items()}
@@ -171,14 +177,13 @@ class GamePanel:
         state_games['multiple_games'] = (state_games['n_games_in_state'] > 1).astype(int)
         panel = panel.merge(state_games, on=['state', 'game_date'], how='left')
       else:
-        panel['team'] = panel['county'].map(self.mapping)
         panel = panel.merge(games, on=['team', 'game_date'], how='left')
 
       panel['game_day'] = panel['game_outcome'].notna().astype(int)
       panel['game_outcome'] = panel['game_outcome'].fillna('no_game')
 
       # Confounder merge
-      if not self.trends and 'team' in panel.columns:
+      if 'team' in panel.columns:
           conf_home = confounders.rename(columns={'conf_attendance': 'conf_attendance_h',
               'avg_ref_rest_days': 'avg_ref_rest_days_h', 'rest_category': 'rest_category_h'})
           panel = panel.merge(conf_home[['game_date', 'home_team', 'conf_attendance_h',
