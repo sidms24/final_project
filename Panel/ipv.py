@@ -1,7 +1,45 @@
 
 import pandas as pd
+
+
+def load_agency_metadata():
+  """Load ORI-level agency type and population from FBI CDE API extract."""
+  ag = pd.read_csv('https://huggingface.co/datasets/group-a/Final_Project/resolve/main/NIBRS_data/nibrs_pop_and_type.csv')
+  # One row per ORI: take most recent year's data
+  ag = ag.sort_values('data_year').drop_duplicates(subset='ori', keep='last')
+  # Normalise county name to title case (source is ALL CAPS)
+  ag['county_name'] = ag['county_name'].str.title()
+  return ag
+
 def load_ipv():
   df = pd.read_parquet('https://huggingface.co/datasets/group-a/Final_Project/resolve/main/cleaned_nibrs/dv_data_v2.parquet')
+
+  # ── Merge agency metadata for type filter ──
+  ag = load_agency_metadata()
+  n_before = df['ori'].nunique()
+  df = df.merge(ag[['ori', 'agency_type_name', 'population']], on='ori', how='left')
+  n_matched = df['agency_type_name'].notna().sum()
+  print(f"Agency metadata merge: {n_matched:,}/{len(df):,} incidents matched "
+        f"({df['ori'].nunique()}/{n_before} ORIs)")
+
+  # Exclude Shelby County, TN — systematic miscoding of relationship categories
+  # (Cardazzi et al. 2024: 61.5% bf/gf vs 45% avg, underuses "relationship unknown")
+  shelby_mask = (df['county'].str.lower() == 'shelby') & (df['state'].str.lower() == 'tennessee')
+  n_shelby = shelby_mask.sum()
+  df = df[~shelby_mask].copy()
+  if n_shelby > 0:
+      print(f"Shelby County exclusion: dropped {n_shelby:,} incidents (Cardazzi et al. 2024)")
+
+  # Exclude state police, college police, and special agencies (Card & Dahl 2011)
+  excluded_types = ['state police', 'college', 'university', 'special']
+  type_mask = df['agency_type_name'].str.lower().str.contains(
+      '|'.join(excluded_types), na=False)
+  n_excluded = type_mask.sum()
+  df = df[~type_mask].copy()
+  print(f"Agency type exclusion: dropped {n_excluded:,} non-city/county incidents (Card & Dahl 2011)")
+  df.drop(columns=['agency_type_name'], inplace=True)
+  df.rename(columns={'population': 'ori_population'}, inplace=True)
+
   mask = (
         (df['vfemale'] == 1) &
         (df['ofemale'] == 0) &
@@ -20,7 +58,7 @@ def load_ipv():
   df['is_spouse']   = ((df['spouse'] == 1) | (df['commonspouse'] == 1)).astype(int)
   df['is_ipv']      = (df['intpartner'] == 1).astype(int)
   result = (
-      df.groupby(['ori', 'county', 'state', 'game_date', 'year'], as_index=False)
+      df.groupby(['ori', 'county', 'state', 'game_date', 'year', 'ori_population'], as_index=False)
       .agg(
           ipv_count      = ('is_ipv',      'sum'),
           spouse_count   = ('is_spouse',   'sum'),

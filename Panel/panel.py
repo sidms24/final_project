@@ -1,8 +1,7 @@
-from confounders import load_confounders, load_game_controls, load_handle, load_pop_data
+from confounders import load_confounders, load_game_controls, load_handle
 from favourites import load_favourites
 from games import load_game_outcomes
 from ipv import load_ipv
-from helpers import load_game_day_reporting, get_passing_ori_seasons, filter_consistent_reporters
 from policy import load_legalisation
 import pandas as pd 
 import numpy as np
@@ -11,14 +10,11 @@ from CONSTANTS import state_map_nba, state_map_wnba, county_map_nba, county_map_
 
 class GamePanel:
     def __init__(self, league, county_team_mapping=None, grey_zone=False,
-                 trends=False, min_years=5, county_only=False,
-                 game_day_filter=True):
+                 trends=False, county_only=False):
       self.league = league
       self.trends = trends
       self.grey_zone = grey_zone
-      self.min_years = min_years
       self.county_only = county_only
-      self.game_day_filter = game_day_filter
       if league.lower() == 'nba':
         self.state_map = state_map_nba
         self.county_map = county_map_nba
@@ -40,7 +36,6 @@ class GamePanel:
       self._legal = None
       self._ipv = None
       self._panel = None
-      self._pop = None
       self._handle = None
 
     def load_game_controls(self):
@@ -49,9 +44,6 @@ class GamePanel:
     def load_confounders(self):
       if self._confounders is None: self._confounders = load_confounders(self.league)
       return self._confounders
-    def load_pop(self):
-      if self._pop is None: self._pop = load_pop_data()
-      return self._pop
     def load_game_outcomes(self):
       if self._outcomes is None: self._outcomes = load_game_outcomes(self.league, self.trends)
       return self._outcomes
@@ -95,8 +87,11 @@ class GamePanel:
           'game_date': all_dates[date_idx], 'ori': ori_ref['ori'].values[ori_row_idx],
           'county': ori_ref['county'].values[ori_row_idx], 'state': ori_ref['state'].values[ori_row_idx],
       })
+      # ori_population is constant per ORI — merge separately so zero-filled rows get it
+      ori_pop = ipv.groupby('ori')['ori_population'].first()
       grid = grid.merge(ipv[['ori', 'game_date', 'ipv_count', 'spouse_count', 'bgfriend_count']],
           on=['ori', 'game_date'], how='left')
+      grid['ori_population'] = grid['ori'].map(ori_pop)
       for col in ['ipv_count', 'spouse_count', 'bgfriend_count']:
           grid[col] = grid[col].fillna(0).astype(np.int32)
       grid['year'] = grid['game_date'].dt.year.astype(str)
@@ -108,29 +103,9 @@ class GamePanel:
       confounders = self.load_confounders()
       legal = self.load_legalisation()
       ipv   = self.load_ipv()
-      pop   = self.load_pop()
       handle = self.load_handle()
 
-      consistent_oris = filter_consistent_reporters(ipv, min_years=self.min_years)
-
-      if self.game_day_filter:
-          reporting_df = load_game_day_reporting(self.league)
-          self._passing_ori_seasons, passing_oris = get_passing_ori_seasons(
-              reporting_df, consistent_oris)
-          consistent_oris = consistent_oris & passing_oris
-
-      ipv = ipv[ipv['ori'].isin(consistent_oris)].copy()
       grid = self._zero_fill(ipv)
-
-      if self.game_day_filter and hasattr(self, '_passing_ori_seasons'):
-          date_to_season = (games[['game_date', 'season']].drop_duplicates()
-              .set_index('game_date')['season'])
-          grid['season'] = grid['game_date'].map(date_to_season)
-          before = len(grid)
-          grid['_ori_season'] = list(zip(grid['ori'], grid['season']))
-          grid = grid[grid['season'].isna() | grid['_ori_season'].isin(self._passing_ori_seasons)].copy()
-          grid.drop(columns=['_ori_season', 'season'], inplace=True)
-          print(f"Per-season ORI filter: {before:,} -> {len(grid):,} rows ({before - len(grid):,} dropped)")
 
       if not self.trends and 'team' in games.columns:
           dupes = games.duplicated(subset=['team', 'game_date'], keep=False)
@@ -140,7 +115,8 @@ class GamePanel:
 
       grid = (grid.groupby(['county', 'state', 'game_date', 'year'], as_index=False)
           .agg(ipv_count=('ipv_count','sum'), spouse_count=('spouse_count','sum'),
-               bgfriend_count=('bgfriend_count','sum')))
+               bgfriend_count=('bgfriend_count','sum'),
+               population_estimate=('ori_population', 'sum')))
       print(f"County-day aggregation: {grid['county'].nunique():,} counties, {len(grid):,} rows")
 
       legal_state = (legal.drop(columns=['team', 'betting_type'], errors='ignore')
@@ -250,13 +226,9 @@ class GamePanel:
                   'Oklahoma City Thunder', 'Utah Jazz'}
               panel['cardazzi_team'] = panel['team'].isin(_cardazzi_teams).astype(int)
 
-      if self.trends:
-          panel = panel.merge(pop, on=['state', 'county', 'year'], how='left')
-          panel.reset_index(drop=True, inplace=True)
-      else:
-          panel = panel.merge(pop, on=['state', 'county', 'year'], how='left')
+      if not self.trends:
           panel = panel[panel['county'].isin(self.counties)]
-          panel.reset_index(drop=True, inplace=True)
+      panel.reset_index(drop=True, inplace=True)
 
       if self.grey_zone:
           panel['temp_state'] = panel['team'].map(self.state_map)

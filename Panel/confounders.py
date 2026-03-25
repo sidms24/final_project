@@ -112,13 +112,3 @@ def load_handle():
   return handle[handle_cols]
 
 
-def load_pop_data():
-  pop = pd.read_parquet('https://huggingface.co/datasets/group-a/Final_Project/resolve/main/US_data/us_popest_countystate_2010-2024_df.parquet')
-  pop = pop.rename(columns = {'STNAME': 'state', 'CTYNAME':'county'})
-  pop = pop.melt(
-      id_vars=['state', 'county'],
-      var_name='year',
-      value_name='population_estimate'
-  )
-  pop['year'] = pop['year'].str.replace('POPESTIMATE', '')
-  return pop
