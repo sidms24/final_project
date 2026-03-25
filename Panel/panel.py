@@ -69,8 +69,18 @@ class GamePanel:
     def _zero_fill(self, ipv):
       ipv = ipv.copy()
       ipv['game_date'] = pd.to_datetime(ipv['game_date'])
-      ori_ref = (ipv.groupby(['ori', 'county', 'state'])['game_date']
-          .agg(min_date='min', max_date='max').reset_index())
+      ori_ref = (ipv.groupby(['ori', 'county', 'state'])
+          .agg(min_date=('game_date', 'min'), max_date=('game_date', 'max'),
+               nibrs_start_date=('nibrs_start_date', 'first'))
+          .reset_index())
+      # Use nibrs_start_date as floor so we don't zero-fill before the agency reported
+      ori_ref['nibrs_start_date'] = pd.to_datetime(ori_ref['nibrs_start_date'])
+      has_nibrs = ori_ref['nibrs_start_date'].notna()
+      ori_ref.loc[has_nibrs, 'min_date'] = ori_ref.loc[has_nibrs, [
+          'nibrs_start_date', 'min_date']].max(axis=1)
+      n_truncated = (has_nibrs & (ori_ref['nibrs_start_date'] > ori_ref['min_date'])).sum()
+      print(f"NIBRS left-truncation: {has_nibrs.sum():,} ORIs with start date, "
+            f"{n_truncated:,} truncated")
       all_dates = np.sort(np.array(list(self._active_days), dtype='datetime64[ns]'))
       all_dates = all_dates[all_dates >= np.datetime64('2012-01-01')]
       start_idx = np.searchsorted(all_dates, ori_ref['min_date'].values.astype('datetime64[ns]'), side='left')
@@ -86,6 +96,7 @@ class GamePanel:
       grid = pd.DataFrame({
           'game_date': all_dates[date_idx], 'ori': ori_ref['ori'].values[ori_row_idx],
           'county': ori_ref['county'].values[ori_row_idx], 'state': ori_ref['state'].values[ori_row_idx],
+          'nibrs_start_date': ori_ref['nibrs_start_date'].values[ori_row_idx],
       })
       # ori_population is constant per ORI — merge separately so zero-filled rows get it
       ori_pop = ipv.groupby('ori')['ori_population'].first()
@@ -114,6 +125,12 @@ class GamePanel:
               games = games.drop_duplicates(subset=['team', 'game_date'], keep='first')
 
       grid = grid.rename(columns={'ori_population': 'population_estimate'})
+      # Drop rows before ORI started NIBRS reporting (structural missing, not true zeros)
+      pre_nibrs = grid['nibrs_start_date'].notna() & (grid['game_date'] < grid['nibrs_start_date'])
+      if pre_nibrs.any():
+          print(f"Dropping {pre_nibrs.sum():,} pre-NIBRS-reporting rows ({pre_nibrs.sum()/len(grid)*100:.1f}%)")
+          grid = grid[~pre_nibrs].copy()
+      grid.drop(columns=['nibrs_start_date'], inplace=True)
       print(f"ORI-day panel: {grid['ori'].nunique():,} ORIs, {grid['county'].nunique():,} counties, {len(grid):,} rows")
 
       legal_state = (legal.drop(columns=['team', 'betting_type'], errors='ignore')

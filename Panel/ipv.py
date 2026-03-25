@@ -39,6 +39,7 @@ def load_ipv():
   print(f"Agency type exclusion: dropped {n_excluded:,} non-city/county incidents (Card & Dahl 2011)")
   df.drop(columns=['agency_type_name'], inplace=True)
   df.rename(columns={'population': 'ori_population'}, inplace=True)
+  df['nibrs_start_date'] = pd.to_datetime(df['nibrs_start_date'], errors='coerce')
 
   mask = (
         (df['vfemale'] == 1) &
@@ -58,7 +59,8 @@ def load_ipv():
   df['is_spouse']   = ((df['spouse'] == 1) | (df['commonspouse'] == 1)).astype(int)
   df['is_ipv']      = (df['intpartner'] == 1).astype(int)
   result = (
-      df.groupby(['ori', 'county', 'state', 'game_date', 'year', 'ori_population'], as_index=False)
+      df.groupby(['ori', 'county', 'state', 'game_date', 'year', 'ori_population',
+                   'nibrs_start_date'], as_index=False)
       .agg(
           ipv_count      = ('is_ipv',      'sum'),
           spouse_count   = ('is_spouse',   'sum'),
