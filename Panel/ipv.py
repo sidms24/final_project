@@ -17,7 +17,7 @@ def load_ipv():
   # ── Merge agency metadata for type filter ──
   ag = load_agency_metadata()
   n_before = df['ori'].nunique()
-  df = df.merge(ag[['ori', 'agency_type_name', 'population']], on='ori', how='left')
+  df = df.merge(ag[['ori', 'agency_type_name', 'population', 'nibrs_start_date']], on='ori', how='left')
   n_matched = df['agency_type_name'].notna().sum()
   print(f"Agency metadata merge: {n_matched:,}/{len(df):,} incidents matched "
         f"({df['ori'].nunique()}/{n_before} ORIs)")
