@@ -76,11 +76,17 @@ class GamePanel:
       # Use nibrs_start_date as floor so we don't zero-fill before the agency reported
       ori_ref['nibrs_start_date'] = pd.to_datetime(ori_ref['nibrs_start_date'])
       has_nibrs = ori_ref['nibrs_start_date'].notna()
+      n_would_truncate = (has_nibrs & (ori_ref['nibrs_start_date'] > ori_ref['min_date'])).sum()
       ori_ref.loc[has_nibrs, 'min_date'] = ori_ref.loc[has_nibrs, [
           'nibrs_start_date', 'min_date']].max(axis=1)
-      n_truncated = (has_nibrs & (ori_ref['nibrs_start_date'] > ori_ref['min_date'])).sum()
+      # Drop ORIs whose NIBRS start date is after their last observed incident
+      empty = ori_ref['min_date'] > ori_ref['max_date']
+      if empty.any():
+          print(f"NIBRS left-truncation: dropped {empty.sum():,} ORIs with no valid date range "
+                f"(nibrs_start_date > last incident)")
+          ori_ref = ori_ref[~empty].reset_index(drop=True)
       print(f"NIBRS left-truncation: {has_nibrs.sum():,} ORIs with start date, "
-            f"{n_truncated:,} truncated")
+            f"{n_would_truncate:,} left-truncated, {len(ori_ref):,} ORIs remaining")
       all_dates = np.sort(np.array(list(self._active_days), dtype='datetime64[ns]'))
       all_dates = all_dates[all_dates >= np.datetime64('2012-01-01')]
       start_idx = np.searchsorted(all_dates, ori_ref['min_date'].values.astype('datetime64[ns]'), side='left')
