@@ -1,18 +1,19 @@
-from confounders import load_confounders, load_game_controls, load_handle
-from favourites import load_favourites
-from games import load_game_outcomes
-from ipv import load_ipv
-from policy import load_legalisation
-import pandas as pd 
+from .confounders import load_confounders, load_game_controls, load_handle
+from .favourites import load_favourites
+from .games import load_game_outcomes
+from .ipv import load_ipv
+from .policy import load_legalisation
+from .CONSTANTS import state_map_nba, state_map_wnba, county_map_nba, county_map_wnba
+import pandas as pd
 import numpy as np
 from pandas.tseries.holiday import USFederalHolidayCalendar
-from CONSTANTS import state_map_nba, state_map_wnba, county_map_nba, county_map_wnba
 
 class GamePanel:
     def __init__(self, league, county_team_mapping=None, grey_zone=False,
-                 trends=False, county_only=False,
+                 trends=False, county_only=False, hour_range=None,
                  min_coverage=0.0, min_seasons=0, pop_cap=None):
       self.league = league
+      self.hour_range = hour_range
       self.trends = trends
       self.grey_zone = grey_zone
       self.county_only = county_only
@@ -64,8 +65,26 @@ class GamePanel:
       if self._legal is None: self._legal = load_legalisation(self.league, self.trends)
       return self._legal
     def load_ipv(self):
-      if self._ipv is None: self._ipv = load_ipv()
-      return self._ipv
+        if self._ipv is None:
+            self._ipv = load_ipv()
+            if self.hour_range is not None:
+                start, end = self.hour_range
+                if start < end:  # e.g. (12, 24)
+                    self._ipv = self._ipv[self._ipv['incident_hour'].between(start, end - 1)]
+                else:  # wraps midnight e.g. (18, 6)
+                    self._ipv = self._ipv[(self._ipv['incident_hour'] >= start) |
+                                        (self._ipv['incident_hour'] < end)]
+            # aggregate to daily after hour filter
+            self._ipv = (self._ipv
+                .groupby(['ori', 'county', 'state', 'game_date', 'year', 'ori_population',
+                           'nibrs_start_date'], as_index=False)
+                .agg(
+                    ipv_count=('ipv_count', 'sum'),
+                    spouse_count=('spouse_count', 'sum'),
+                    bgfriend_count=('bgfriend_count', 'sum'),
+                    alcohol_count=('alcohol_count', 'sum'),
+                ))
+        return self._ipv
     def load_handle(self):
       if self._handle is None: self._handle = load_handle()
       return self._handle
@@ -110,10 +129,10 @@ class GamePanel:
       })
       # ori_population is constant per ORI — merge separately so zero-filled rows get it
       ori_pop = ipv.groupby('ori')['ori_population'].first()
-      grid = grid.merge(ipv[['ori', 'game_date', 'ipv_count', 'spouse_count', 'bgfriend_count']],
+      grid = grid.merge(ipv[['ori', 'game_date', 'ipv_count', 'spouse_count', 'bgfriend_count', 'alcohol_count']],
           on=['ori', 'game_date'], how='left')
       grid['ori_population'] = grid['ori'].map(ori_pop)
-      for col in ['ipv_count', 'spouse_count', 'bgfriend_count']:
+      for col in ['ipv_count', 'spouse_count', 'bgfriend_count', 'alcohol_count']:
           grid[col] = grid[col].fillna(0).astype(np.int32)
       grid['year'] = grid['game_date'].dt.year.astype(str)
       print(f"Zero-fill: {len(ori_ref):,} ORIs, {len(ipv):,} incident rows -> {total:,} panel rows")

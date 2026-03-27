@@ -49,7 +49,7 @@ def load_ipv():
     )
   df = df[mask].copy()
   df['incident_hour'] = df['incident_hour'].astype(int)
-  df = df[(df['incident_hour'] >= 18) | (df['incident_hour'] < 6)]
+  df['used_alcohol'] = (df['offender_suspected_of_using_1'] == 'alcohol').astype(int)
   df['game_date'] = df['adjusted_date'].where(
       df['incident_hour'] >= 6,
       df['adjusted_date'] - pd.Timedelta(days=1)
@@ -60,11 +60,12 @@ def load_ipv():
   df['is_ipv']      = (df['intpartner'] == 1).astype(int)
   result = (
       df.groupby(['ori', 'county', 'state', 'game_date', 'year', 'ori_population',
-                   'nibrs_start_date'], as_index=False)
+                   'nibrs_start_date', 'incident_hour'], as_index=False)
       .agg(
           ipv_count      = ('is_ipv',      'sum'),
           spouse_count   = ('is_spouse',   'sum'),
           bgfriend_count = ('is_bgfriend', 'sum'),
+          alcohol_count  = ('used_alcohol', 'sum'),
       )
   )
   return result
