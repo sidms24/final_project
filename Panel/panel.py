@@ -236,7 +236,10 @@ class GamePanel:
               .groupby('season')['game_date'].max().rename('season_end'))
           panel = panel.merge(season_end, on='season', how='left')
           panel['weeks_left'] = ((panel['season_end'] - panel['game_date']).dt.days / 7).round(1)
-          panel['weeks_left'] = panel['weeks_left'].clip(lower=0).fillna(0)
+          is_playoff_row = (panel['game_day'] == 1) & (panel['is_playoff'] == 1)
+          panel['weeks_left'] = panel['weeks_left'].fillna(0)
+          panel.loc[is_playoff_row, 'weeks_left'] = -1
+          panel.loc[~is_playoff_row, 'weeks_left'] = panel.loc[~is_playoff_row, 'weeks_left'].clip(lower=0)
           panel['late_season'] = ((panel['weeks_left'] > 0) & (panel['weeks_left'] <= 6)).astype(int)
           panel.drop(columns=['season_end'], inplace=True)
           print(f"weeks_left range [{panel.loc[panel['game_day']==1, 'weeks_left'].min()}, "
