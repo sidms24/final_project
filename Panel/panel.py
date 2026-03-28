@@ -132,6 +132,37 @@ class GamePanel:
       ipv   = self.load_ipv()
       handle = self.load_handle()
 
+      # ── Pre-zero-fill filters (reduce ipv before expensive grid expansion) ──
+      n_ori_raw = ipv['ori'].nunique()
+
+      if not self.trends:
+          ipv = ipv[ipv['county'].isin(self.counties)]
+
+      if self.grey_zone:
+          _team = ipv['county'].map(self.mapping)
+          ipv = ipv[_team.map(self.state_map) == ipv['state']]
+
+      if self.county_only:
+          _team = ipv['county'].map(self.mapping)
+          ipv = ipv[_team.map(self.county_map) == ipv['county']]
+
+      if self.pop_cap is not None:
+          ipv = ipv[ipv['ori_population'] <= self.pop_cap]
+
+      _cov_data = None
+      if self.min_coverage > 0:
+          if self.league.lower() == 'nba':
+              cov_url = 'https://huggingface.co/datasets/group-a/Final_Project/resolve/main/cleaned_nibrs/ori_game_day_reporting_nba.parquet'
+          else:
+              cov_url = 'https://huggingface.co/datasets/group-a/Final_Project/resolve/main/cleaned_nibrs/ori_game_day_reporting_wnba.parquet'
+          _cov_data = pd.read_parquet(cov_url)[['ori', 'season', 'reporting_frac']]
+          _cov_data['season'] = _cov_data['season'].astype(str)
+          _cov_data.rename(columns={'reporting_frac': 'coverage'}, inplace=True)
+          _good_oris = _cov_data[_cov_data['coverage'] >= self.min_coverage]['ori'].unique()
+          ipv = ipv[ipv['ori'].isin(_good_oris)]
+
+      print(f"Pre-filters: {n_ori_raw:,} -> {ipv['ori'].nunique():,} ORIs before zero-fill")
+
       grid = self._zero_fill(ipv)
 
       if not self.trends and 'team' in games.columns:
@@ -264,40 +295,13 @@ class GamePanel:
                   'Oklahoma City Thunder', 'Utah Jazz'}
               panel['cardazzi_team'] = panel['team'].isin(_cardazzi_teams).astype(int)
 
-      if not self.trends:
-          panel = panel[panel['county'].isin(self.counties)]
-      panel.reset_index(drop=True, inplace=True)
-
-      if self.grey_zone:
-          panel['temp_state'] = panel['team'].map(self.state_map)
-          panel = panel[panel['temp_state'] == panel['state']]
-          panel.drop(columns=['temp_state'], inplace=True)
-      if self.county_only:
-          panel['temp_county'] = panel['team'].map(self.county_map)
-          panel = panel[panel['temp_county'] == panel['county']]
-          panel.drop(columns=['temp_county'], inplace=True)
-
-
-      # ── ORI quality filters ──
-      if self.pop_cap is not None:
-          before = panel['ori'].nunique()
-          panel = panel[panel['population_estimate'] <= self.pop_cap]
-          after = panel['ori'].nunique()
-          print(f"Population cap ({self.pop_cap:,}): {before - after:,} ORIs dropped, "
-                f"{after:,} remaining")
-
+      # ── ORI quality filters (county, grey_zone, county_only, pop_cap applied pre-zero-fill) ──
       if (self.min_coverage > 0 or self.min_seasons > 0) and 'season' in panel.columns:
           n_ori_before = panel['ori'].nunique()
           n_rows_before = len(panel)
 
-          if self.min_coverage > 0:
-              # Load pre-computed ORI game-day reporting coverage
-              if self.league.lower() == 'nba':
-                  cov_url = 'https://huggingface.co/datasets/group-a/Final_Project/resolve/main/cleaned_nibrs/ori_game_day_reporting_nba.parquet'
-              else:
-                  cov_url = 'https://huggingface.co/datasets/group-a/Final_Project/resolve/main/cleaned_nibrs/ori_game_day_reporting_wnba.parquet'
-              ori_season = pd.read_parquet(cov_url)[['ori', 'season', 'reporting_frac']]
-              ori_season.rename(columns={'reporting_frac': 'coverage'}, inplace=True)
+          if self.min_coverage > 0 and _cov_data is not None:
+              ori_season = _cov_data
               # Drop individual ORI-seasons below threshold (not entire ORI)
               good = ori_season[ori_season['coverage'] >= self.min_coverage][['ori', 'season']]
               bad_pairs = len(ori_season) - len(good)
