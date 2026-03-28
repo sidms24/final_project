@@ -10,7 +10,7 @@ from pandas.tseries.holiday import USFederalHolidayCalendar
 
 class GamePanel:
     def __init__(self, league, county_team_mapping=None, grey_zone=False,
-                 trends=False, county_only=False, hour_range=None,
+                 trends=False, county_only=False, hour_range=(18, 6),
                  min_coverage=0.0, min_seasons=0, pop_cap=None,
                  nibrs_cutoff=None):
       self.league = league
@@ -113,11 +113,12 @@ class GamePanel:
           'county': ori_ref['county'].values[ori_row_idx], 'state': ori_ref['state'].values[ori_row_idx],
           'nibrs_start_date': ori_ref['nibrs_start_date'].values[ori_row_idx],
       })
-      # ori_population is constant per ORI — merge separately so zero-filled rows get it
-      ori_pop = ipv.groupby('ori')['ori_population'].first()
-      grid = grid.merge(ipv[['ori', 'game_date', 'ipv_count', 'spouse_count', 'bgfriend_count', 'alcohol_count']],
-          on=['ori', 'game_date'], how='left')
-      grid['ori_population'] = grid['ori'].map(ori_pop)
+      # ori_population can vary by year — use median per ORI-county as stable estimate
+      ori_pop = ipv.groupby(['ori', 'county'])['ori_population'].median()
+      grid = grid.merge(ipv[['ori', 'county', 'game_date', 'ipv_count', 'spouse_count', 'bgfriend_count', 'alcohol_count']],
+          on=['ori', 'county', 'game_date'], how='left')
+      grid['ori_population'] = grid.set_index(['ori', 'county']).index.map(ori_pop)
+      grid.reset_index(drop=True, inplace=True)
       for col in ['ipv_count', 'spouse_count', 'bgfriend_count', 'alcohol_count']:
           grid[col] = grid[col].fillna(0).astype(np.int32)
       grid['year'] = grid['game_date'].dt.year.astype(str)
