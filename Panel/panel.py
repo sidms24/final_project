@@ -11,7 +11,8 @@ from pandas.tseries.holiday import USFederalHolidayCalendar
 class GamePanel:
     def __init__(self, league, county_team_mapping=None, grey_zone=False,
                  trends=False, county_only=False, hour_range=None,
-                 min_coverage=0.0, min_seasons=0, pop_cap=None):
+                 min_coverage=0.0, min_seasons=0, pop_cap=None,
+                 nibrs_cutoff=None):
       self.league = league
       self.hour_range = hour_range
       self.trends = trends
@@ -20,6 +21,7 @@ class GamePanel:
       self.min_coverage = min_coverage
       self.min_seasons = min_seasons
       self.pop_cap = pop_cap
+      self.nibrs_cutoff = nibrs_cutoff
       if league.lower() == 'nba':
         self.state_map = state_map_nba
         self.county_map = county_map_nba
@@ -66,24 +68,8 @@ class GamePanel:
       return self._legal
     def load_ipv(self):
         if self._ipv is None:
-            self._ipv = load_ipv()
-            if self.hour_range is not None:
-                start, end = self.hour_range
-                if start < end:  # e.g. (12, 24)
-                    self._ipv = self._ipv[self._ipv['incident_hour'].between(start, end - 1)]
-                else:  # wraps midnight e.g. (18, 6)
-                    self._ipv = self._ipv[(self._ipv['incident_hour'] >= start) |
-                                        (self._ipv['incident_hour'] < end)]
-            # aggregate to daily after hour filter
-            self._ipv = (self._ipv
-                .groupby(['ori', 'county', 'state', 'game_date', 'year', 'ori_population',
-                           'nibrs_start_date'], as_index=False)
-                .agg(
-                    ipv_count=('ipv_count', 'sum'),
-                    spouse_count=('spouse_count', 'sum'),
-                    bgfriend_count=('bgfriend_count', 'sum'),
-                    alcohol_count=('alcohol_count', 'sum'),
-                ))
+            self._ipv = load_ipv(hour_range=self.hour_range,
+                                 nibrs_cutoff=self.nibrs_cutoff)
         return self._ipv
     def load_handle(self):
       if self._handle is None: self._handle = load_handle()
