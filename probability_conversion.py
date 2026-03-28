@@ -54,8 +54,22 @@ def add_team_perspectives(df):
                     "close_win"       if w and p<0.5 else
                     "expected_win")
 
-        rows.append({**g, "team": g.home_team, "team_prob": home_prob, "game_outcome": outcome(home_prob, home_win)})
-        rows.append({**g, "team": g.away_team, "team_prob": away_prob, "game_outcome": outcome(away_prob, away_win)})
+        def classify(p, w):
+            """Three-category implied-probability classification (Card & Dahl)."""
+            return {
+                'predwin':   int(p >= 0.67),
+                'predclose': int(0.33 < p < 0.67),
+                'predloss':  int(p <= 0.33),
+                'win':       int(w),
+                'loss':      int(not w),
+            }
+
+        rows.append({**g, "team": g.home_team, "team_prob": home_prob,
+                     "game_outcome": outcome(home_prob, home_win),
+                     **classify(home_prob, home_win)})
+        rows.append({**g, "team": g.away_team, "team_prob": away_prob,
+                     "game_outcome": outcome(away_prob, away_win),
+                     **classify(away_prob, away_win)})
 
     return pd.DataFrame(rows)
 

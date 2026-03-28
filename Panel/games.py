@@ -21,7 +21,10 @@ def load_game_outcomes(league='NBA', trends=False):
   game_outcomes['dt_obj'] = pd.to_datetime(game_outcomes['date'].apply(lambda x: x.split(' -')[0]), format='mixed', errors='coerce')
   game_outcomes['game_date'] = (game_outcomes['dt_obj'] - dt.timedelta(hours=5)).dt.normalize()
   game_outcomes.drop(columns=['date', 'dt_obj'], inplace=True)
-  cols = ['game_date','home_team', 'away_team','team' ,'game_outcome', 'winner', 'bookmakers', 'time']
+  base_cols = ['game_date','home_team', 'away_team','team' ,'game_outcome', 'winner', 'bookmakers', 'time']
+  # Include team_prob for implied-probability model (Card & Dahl specification)
+  optional = ['team_prob', 'predwin', 'predclose', 'predloss', 'win', 'loss']
+  cols = base_cols + [c for c in optional if c in game_outcomes.columns]
   if trends:
     cols += ['state']
   return game_outcomes[cols]

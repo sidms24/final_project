@@ -223,6 +223,35 @@ class GamePanel:
       panel['game_day'] = panel['game_outcome'].notna().astype(int)
       panel['game_outcome'] = panel['game_outcome'].fillna('no_game')
 
+      # ── Implied-probability model (Card & Dahl / Cardazzi et al.) ──
+      # Prediction categories from normalised implied win probability
+      if 'team_prob' in panel.columns:
+          panel['team_prob'] = panel['team_prob'].fillna(0)
+          panel['predwin']   = ((panel['game_day'] == 1) & (panel['team_prob'] >= 0.67)).astype(int)
+          panel['predclose'] = ((panel['game_day'] == 1) & (panel['team_prob'] > 0.33) & (panel['team_prob'] < 0.67)).astype(int)
+          panel['predloss']  = ((panel['game_day'] == 1) & (panel['team_prob'] <= 0.33)).astype(int)
+      elif 'predwin' not in panel.columns:
+          panel['predwin']   = 0
+          panel['predclose'] = 0
+          panel['predloss']  = 0
+          print("WARNING: team_prob not available — prediction categories set to 0")
+
+      # Actual outcome binary (win/loss from game_outcome string)
+      panel['win']  = panel['game_outcome'].str.contains('win', na=False).astype(int)
+      panel['loss'] = panel['game_outcome'].str.contains('loss', na=False).astype(int)
+
+      # Interaction variables: expectation × actual outcome × game day
+      panel['upsetloss'] = (panel['game_day'] * panel['loss'] * panel['predwin']).astype(int)
+      panel['closeloss'] = (panel['game_day'] * panel['loss'] * panel['predclose']).astype(int)
+      panel['upsetwin']  = (panel['game_day'] * panel['win']  * panel['predloss']).astype(int)
+
+      n_gd = (panel['game_day'] == 1).sum()
+      print(f"Implied-prob variables: {n_gd:,} game-day rows — "
+            f"predwin={panel['predwin'].sum():,}, predclose={panel['predclose'].sum():,}, "
+            f"predloss={panel['predloss'].sum():,} | "
+            f"upsetloss={panel['upsetloss'].sum():,}, closeloss={panel['closeloss'].sum():,}, "
+            f"upsetwin={panel['upsetwin'].sum():,}")
+
       # Confounder merge
       if 'team' in panel.columns:
           conf_home = confounders.rename(columns={'conf_attendance': 'conf_attendance_h',
@@ -344,6 +373,75 @@ class GamePanel:
       self._panel = panel
       return panel
 
+
+    def run_poisson(self, exclude_playoffs=False, cluster='ori_season'):
+      """
+      Poisson regression of daily IPV count on game-outcome interactions.
+
+      Specification (Cardazzi et al. fixed-effects structure):
+        ipv_count ~ upsetloss + closeloss + upsetwin
+                    + predwin + predclose + predloss
+                    + holiday + tipoff_hour
+                    | ori + dow + month
+
+      Parameters
+      ----------
+      exclude_playoffs : bool
+          If True, drop playoff game-day rows (regular season only).
+      cluster : str
+          Clustering level for standard errors.
+          'ori_season' (default) or 'ori'.
+      """
+      if self._panel is None:
+          raise ValueError("Call .panel() first to build the dataset")
+
+      df = self._panel.copy()
+
+      # Step 5: optionally exclude playoff game-day rows
+      if exclude_playoffs and 'is_playoff' in df.columns:
+          playoff_mask = (df['game_day'] == 1) & (df['is_playoff'] == 1)
+          n_drop = playoff_mask.sum()
+          df = df[~playoff_mask].copy()
+          print(f"Excluding playoffs: dropped {n_drop:,} game-day rows")
+
+      # Build cluster column
+      if cluster == 'ori_season':
+          season_col = df['season'].fillna('off') if 'season' in df.columns else df['year']
+          df['_cluster'] = df['ori'] + '_' + season_col.astype(str)
+      else:
+          df['_cluster'] = df['ori']
+
+      # Fill controls for non-game days
+      df['tipoff_hour'] = df['tipoff_hour'].fillna(0)
+
+      regressors = ['upsetloss', 'closeloss', 'upsetwin',
+                     'predwin', 'predclose', 'predloss',
+                     'holiday', 'tipoff_hour']
+      fe = 'ori + dow + month'
+
+      try:
+          import pyfixest as pf
+          fml = f"ipv_count ~ {' + '.join(regressors)} | {fe}"
+          result = pf.fepois(fml, data=df, vcov={'CRV1': '_cluster'})
+          print(result.summary())
+          return result
+      except ImportError:
+          pass
+
+      # Fallback: statsmodels GLM (may be slow with many ORIs)
+      import statsmodels.api as sm
+      print("pyfixest not found — falling back to statsmodels GLM "
+            "(install pyfixest for efficient high-dimensional FE)")
+      import pandas as _pd
+      fe_dummies = _pd.get_dummies(df[['dow', 'month']], drop_first=True)
+      X = _pd.concat([df[regressors], fe_dummies], axis=1).astype(float)
+      X = sm.add_constant(X)
+      y = df['ipv_count'].values
+      model = sm.GLM(y, X, family=sm.families.Poisson())
+      result = model.fit(cov_type='cluster',
+                         cov_kwds={'groups': df['_cluster'].values})
+      print(result.summary())
+      return result
 
     def __call__(self):
       return self.panel()
