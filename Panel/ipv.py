@@ -6,9 +6,9 @@ def load_agency_metadata():
   """Load ORI-level agency type and population from FBI CDE API extract."""
   ag = pd.read_csv('https://huggingface.co/datasets/group-a/Final_Project/resolve/main/NIBRS_data/nibrs_pop_and_type.csv')
   # One row per ORI: take most recent year's data
-  ag = ag.sort_values('data_year').drop_duplicates(subset='ori', keep='last')
+  ag = ag.sort_values('year').drop_duplicates(subset='ori', keep='last')
   # Normalise county name to title case (source is ALL CAPS)
-  ag['county_name'] = ag['county_name'].str.title()
+  ag['county'] = ag['county'].str.title()
   return ag
 
 def load_ipv():
@@ -17,8 +17,8 @@ def load_ipv():
   # ── Merge agency metadata for type filter ──
   ag = load_agency_metadata()
   n_before = df['ori'].nunique()
-  df = df.merge(ag[['ori', 'agency_type_name', 'population', 'nibrs_start_date']], on='ori', how='left')
-  n_matched = df['agency_type_name'].notna().sum()
+  df = df.merge(ag[['ori', 'agency_type', 'population', 'nibrs_start_date']], on='ori', how='left')
+  n_matched = df['agency_type'].notna().sum()
   print(f"Agency metadata merge: {n_matched:,}/{len(df):,} incidents matched "
         f"({df['ori'].nunique()}/{n_before} ORIs)")
 
@@ -32,12 +32,12 @@ def load_ipv():
 
   # Exclude state police, college police, and special agencies (Card & Dahl 2011)
   excluded_types = ['state police', 'college', 'university', 'special']
-  type_mask = df['agency_type_name'].str.lower().str.contains(
+  type_mask = df['agency_type'].str.lower().str.contains(
       '|'.join(excluded_types), na=False)
   n_excluded = type_mask.sum()
   df = df[~type_mask].copy()
   print(f"Agency type exclusion: dropped {n_excluded:,} non-city/county incidents (Card & Dahl 2011)")
-  df.drop(columns=['agency_type_name'], inplace=True)
+  df.drop(columns=['agency_type'], inplace=True)
   df.rename(columns={'population': 'ori_population'}, inplace=True)
   df['nibrs_start_date'] = pd.to_datetime(df['nibrs_start_date'], errors='coerce')
 
