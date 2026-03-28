@@ -156,7 +156,6 @@ class GamePanel:
           else:
               cov_url = 'https://huggingface.co/datasets/group-a/Final_Project/resolve/main/cleaned_nibrs/ori_game_day_reporting_wnba.parquet'
           _cov_data = pd.read_parquet(cov_url)[['ori', 'season', 'reporting_frac']]
-          _cov_data['season'] = _cov_data['season'].astype(str)
           _cov_data.rename(columns={'reporting_frac': 'coverage'}, inplace=True)
           _good_oris = _cov_data[_cov_data['coverage'] >= self.min_coverage]['ori'].unique()
           ipv = ipv[ipv['ori'].isin(_good_oris)]
