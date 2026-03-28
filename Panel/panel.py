@@ -291,16 +291,13 @@ class GamePanel:
           n_rows_before = len(panel)
 
           if self.min_coverage > 0:
-              # Total game days per season (from actual game schedule)
-              season_game_days = (panel[panel['game_day'] == 1]
-                  .groupby('season')['game_date'].nunique()
-                  .rename('total_game_days'))
-              # Game days each ORI has per season
-              ori_season = (panel[panel['game_day'] == 1]
-                  .groupby(['ori', 'season'])['game_date'].nunique()
-                  .rename('ori_game_days').reset_index())
-              ori_season = ori_season.merge(season_game_days, on='season')
-              ori_season['coverage'] = ori_season['ori_game_days'] / ori_season['total_game_days']
+              # Load pre-computed ORI game-day reporting coverage
+              if self.league.lower() == 'nba':
+                  cov_url = 'https://huggingface.co/datasets/group-a/Final_Project/resolve/main/cleaned_nibrs/ori_game_day_reporting_nba.parquet'
+              else:
+                  cov_url = 'https://huggingface.co/datasets/group-a/Final_Project/resolve/main/cleaned_nibrs/ori_game_day_reporting_wnba.parquet'
+              ori_season = pd.read_parquet(cov_url)[['ori', 'season', 'reporting_frac']]
+              ori_season.rename(columns={'reporting_frac': 'coverage'}, inplace=True)
               # Drop individual ORI-seasons below threshold (not entire ORI)
               good = ori_season[ori_season['coverage'] >= self.min_coverage][['ori', 'season']]
               bad_pairs = len(ori_season) - len(good)
